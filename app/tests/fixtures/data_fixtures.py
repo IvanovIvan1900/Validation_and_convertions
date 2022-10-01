@@ -1,0 +1,32 @@
+import datetime as dt
+
+import pytest
+
+
+class User:
+    def __init__(self, name, email):
+        self.name = name
+        self.email = email
+        self.created_at = dt.datetime.now()
+
+    def __repr__(self):
+        return "<User(name={self.name!r})>".format(self=self)
+
+@pytest.fixture
+def user_1():
+    return User(name="Monty", email="monty@python.org")
+
+@pytest.fixture
+def user_2_dict():
+    return {
+    "created_at": "2014-08-11T05:26:03.869245",
+    "email": "ken@yahoo.com",
+    "name": "Ken",
+    }
+
+@pytest.fixture
+def user_2_dict_wichout_created_at():
+    return {
+    "email": "ken@yahoo.com",
+    "name": "Ken",
+    }

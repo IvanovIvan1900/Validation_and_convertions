@@ -1,0 +1,17 @@
+{
+    // "python.testing.pytestArgs": [
+    //     "tests"
+    // ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true,
+    "python.formatting.provider": "black",
+    "python.linting.enabled": true,
+    "python.linting.banditEnabled": false,
+    "python.linting.pylintEnabled": false,
+    "python.linting.flake8Enabled": true,
+    "python.linting.flake8Path": "/home/dav/.cache/pypoetry/virtualenvs/sqlalchemie-NXxUsfkP-py3.10/lib/python3.10/site-packages/flake8/",
+    "python.linting.mypyEnabled": false,
+    "python.testing.pytestArgs": [
+        "."
+    ],
+}
