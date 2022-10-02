@@ -30,3 +30,26 @@ def user_2_dict_wichout_created_at():
     "email": "ken@yahoo.com",
     "name": "Ken",
     }
+
+class Client:
+    def __init__(self, name, email):
+        self.name = name
+        self.email = email
+        self.created_at = dt.datetime.now()
+        self.tasks = []
+
+
+class Task:
+    def __init__(self, title):
+        self.title = title
+
+
+@pytest.fixture
+def clien_wich_two_tasks():
+    task_1 = Task("First task")
+    task_2 = Task("Two task")
+    client = Client('Test client', 'test@mail.ru')
+    client.tasks.append(task_1)
+    client.tasks.append(task_1)
+
+    return client

@@ -16,3 +16,19 @@ class UserSchemaWichPostLoad(Schema):
     @post_load
     def make_user(self, data, **kwargs):
         return User(**data)
+
+class TaskSchema(Schema):
+    title = fields.Str()
+
+class CleintSchema(Schema):
+    name = fields.Str()
+    email = fields.Email()
+    created_at = fields.DateTime()
+    tasks = fields.List(fields.Nested(TaskSchema))
+
+class CleintSchemaFlat(Schema):
+    name = fields.Str()
+    email = fields.Email()
+    created_at = fields.DateTime()
+    tasks = fields.Pluck(TaskSchema, 'title', many=True)
+
