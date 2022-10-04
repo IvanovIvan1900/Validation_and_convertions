@@ -3,7 +3,7 @@ import uuid
 from app.tests.fixtures.data_fixtures import Client, User
 from app.tests.fixtures.marshmellow_fixtures import UserSchema, UserSchemaWichPostLoad, CleintSchema, CleintSchemaFlat
 from pytest_dictsdiff import check_objects
-from marshmallow import INCLUDE, Schema, ValidationError, fields
+from marshmallow import INCLUDE, Schema, ValidationError, fields, post_dump, post_load, pre_load, validates_schema
 import datetime as dt
 
 
@@ -283,3 +283,107 @@ class TestCustomFields():
         assert len(dict_error_validations) == 2
         assert dict_error_validations['email'][0] == "Enter valid e-mail."
         assert dict_error_validations['created_at'][0] == "Please provide a valid date."
+
+
+class TestSchemaMetod():
+    # https://marshmallow.readthedocs.io/en/stable/extending.html
+
+    def test_post_procces(self,):
+        class BaseSchema(Schema):
+            # Custom options
+            __envelope__ = {"single": None, "many": None}
+            __model__ = User
+
+            def get_envelope_key(self, many):
+                """Helper to get the envelope key."""
+                key = self.__envelope__["many"] if many else self.__envelope__["single"]
+                assert key is not None, "Envelope key undefined"
+                return key
+
+            @pre_load(pass_many=True)
+            def unwrap_envelope(self, data, many, **kwargs):
+                key = self.get_envelope_key(many)
+                return data[key]
+
+            @post_dump(pass_many=True)
+            def wrap_with_envelope(self, data, many, **kwargs):
+                key = self.get_envelope_key(many)
+                return {key: data}
+
+            @post_load
+            def make_object(self, data, **kwargs):
+                return self.__model__(**data)
+
+
+        class UserSchema(BaseSchema):
+            __envelope__ = {"single": "user", "many": "users"}
+            __model__ = User
+            name = fields.Str()
+            email = fields.Email()
+
+
+        user_schema = UserSchema()
+
+        user = User("Mick", email="mick@stones.org")
+        user_data = user_schema.dump(user)
+        assert 'user' in user_data.keys()
+        # {'user': {'email': 'mick@stones.org', 'name': 'Mick'}}
+
+        users = [
+            User("Keith", email="keith@stones.org"),
+            User("Charlie", email="charlie@stones.org"),
+        ]
+        users_data = user_schema.dump(users, many=True)
+        assert 'users' in users_data.keys()
+        assert isinstance(users_data['users'], list)
+        # {'users': [{'email': 'keith@stones.org', 'name': 'Keith'},
+        #            {'email': 'charlie@stones.org', 'name': 'Charlie'}]}
+
+        user_objs = user_schema.load(users_data, many=True)
+        assert isinstance(user_objs, list)
+        assert isinstance(user_objs[0], User)
+        # [<User(name='Keith Richards')>, <User(name='Charlie Watts')>]
+
+    def test_raise_value_in_post_method(self):
+        class BandSchema(Schema):
+            name = fields.Str()
+
+            @pre_load
+            def unwrap_envelope(self, data, **kwargs):
+                if "data" not in data:
+                    raise ValidationError(
+                        'Input data must have a "data" key.', "_preprocessing"
+                    )
+                return data["data"]
+
+
+        sch = BandSchema()
+        try:
+            sch.load({"name": "The Band"})
+            assert False
+        except ValidationError as err:
+            err.messages
+            assert isinstance(err.messages, dict)
+            assert '_preprocessing' in err.messages
+        # {'_preprocessing': ['Input data must have a "data" key.']}
+
+    def test_schema_level_validation(self,):
+        class NumberSchema(Schema):
+            field_a = fields.Integer()
+            field_b = fields.Integer()
+
+            @validates_schema
+            def validate_numbers(self, data, **kwargs):
+                if data["field_b"] >= data["field_a"]:
+                    raise ValidationError("field_a must be greater than field_b")
+
+
+        schema = NumberSchema()
+        try:
+            schema.load({"field_a": 1, "field_b": 2})
+            assert False
+        except ValidationError as err:
+            err.messages["_schema"]
+            assert isinstance(err.messages, dict)
+            assert '_schema' in err.messages
+        # => ["field_a must be greater than field_b"]
