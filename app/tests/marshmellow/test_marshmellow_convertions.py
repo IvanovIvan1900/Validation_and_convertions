@@ -206,3 +206,80 @@ class TestNestedFIelds():
         # flat list, only contain field in Pluck
         assert isinstance(result['tasks'], list)
         assert isinstance(result['tasks'][0], str)
+
+
+class TestCustomFields():
+    #https://marshmallow.readthedocs.io/en/stable/custom_fields.html
+
+    def test_cutom_field_class(self, user_2_dict:dict):
+        class PinCode(fields.Field):
+            """Field that serializes to a string of numbers and deserializes
+            to a list of numbers.
+            """
+
+            def _serialize(self, value, attr, obj, **kwargs):
+                if value is None:
+                    return ""
+                return "".join(str(d) for d in value)
+
+            def _deserialize(self, value, attr, data, **kwargs):
+                try:
+                    return [int(c) for c in value]
+                except ValueError as error:
+                    raise ValidationError("Pin codes must contain only digits.") from error
+
+
+        class UserSchema(Schema):
+            name = fields.String()
+            email = fields.String()
+            created_at = fields.DateTime()
+            pin_code = PinCode()
+
+        schema = UserSchema()
+        user_2_dict.update({"pin_code":'12345'})
+        dict_value = schema.load(user_2_dict)
+        assert isinstance(dict_value["pin_code"], list)
+        assert dict_value["pin_code"] == [1,2,3,4,5]
+        repf_value = schema.dump(dict_value)
+        assert isinstance(repf_value["pin_code"], str)
+        assert repf_value["pin_code"] == "12345"
+
+    def test_custom_fields_function(self, user_2_dict:dict):
+        class UserSchema(Schema):
+            income = fields.Integer()
+            debt = fields.Integer()
+            # `Method` takes a method name (str), Function takes a callable
+            balance = fields.Method("get_balance", deserialize="load_balance")
+
+            def get_balance(self, obj):
+                return obj.get('income', 0) - obj.get('debt', 0)
+
+            def load_balance(self, value):
+                return float(value)
+
+        input_data = {'income':100, 'debt':30, 'balance':70}
+        schema = UserSchema()
+        data_dict = schema.load(input_data)
+        assert isinstance(data_dict["balance"], float)
+
+        input_data = {'income':100, 'debt':30}
+        output_data = schema.dump(input_data)
+        assert isinstance(output_data['balance'], int)
+        assert output_data['balance'] == 70
+
+    def test_customising_error(self, user_2_dict:dict):
+        class MyDate(fields.Date):
+            default_error_messages = {"invalid": "Please provide a valid date."}
+
+        class UserSchema(Schema):
+            name = fields.String()
+            email = fields.Email(error_messages={"invalid": "Enter valid e-mail."})
+            created_at = MyDate()
+
+        schema = UserSchema()
+        user_2_dict['created_at'] = "not_valid"
+        user_2_dict['email'] = "email_not_valid"
+        dict_error_validations = schema.validate(user_2_dict)
+        assert len(dict_error_validations) == 2
+        assert dict_error_validations['email'][0] == "Enter valid e-mail."
+        assert dict_error_validations['created_at'][0] == "Please provide a valid date."
