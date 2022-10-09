@@ -569,7 +569,272 @@ class TestValidators:
         assert isinstance(ddc.ts, datetime)
         # > DemoDataclass(ts=datetime.datetime(2017, 11, 8, 14, 0))
 
+    def test_validate_argument(self):
+        # https://pydantic-docs.helpmanual.io/usage/validation_decorator/
+        from pydantic import validate_arguments
+
+        @validate_arguments
+        def slow_sum(a: int, b: int) -> int:
+            print(f"Called with a={a}, b={b}")
+            # > Called with a=1, b=1
+            return a + b
+
+        slow_sum(1, 1)
+
+        slow_sum.validate(2, 2)
+
+        try:
+            slow_sum.validate(1, "b")
+        except ValidationError as exc:
+            assert len(exc.errors()) == 1
+            """
+            1 validation error for SlowSum
+            b
+            value is not a valid integer (type=type_error.integer)
+            """
+
+    def test_validate_argument_wich_field(self):
+        from pydantic import validate_arguments
+        from pydantic.typing import Annotated
+
+        @validate_arguments
+        def how_many(num: Annotated[int, Field(gt=10, alias="number")]):
+            return num
+
+        how_many(number=42)
+
 
 class TestModelConfig:
+    # https://pydantic-docs.helpmanual.io/usage/model_config/
 
-    pass
+    def test_model_config(self):
+        class Model(BaseModel):
+            v: str
+
+            class Config:
+                max_anystr_length = 10
+                error_msg_templates = {
+                    "value_error.any_str.max_length": "max_length:{limit_value}",
+                }
+
+        m = Model(v="test str")
+        assert m is not None
+
+        try:
+            Model(**{"v": "too long string"})
+            assert False
+        except ValidationError as e:
+            assert len(e.errors()) == 1
+            assert e.errors()[0]["type"] == "value_error.any_str.max_length"
+
+    def test_field_schema(self):
+        # description schema field
+        # https://pydantic-docs.helpmanual.io/usage/schema/
+        class Model(BaseModel):
+            foo: int = Field(title="foo value", default=15, lt=10)
+
+        try:
+            m = Model(foo=20)
+        except ValidationError as e:
+            assert len(e.errors()) == 1
+            assert e.errors()[0]["type"] == "value_error.number.not_lt"
+
+        m = Model(foo=5)
+        assert m.foo == 5
+
+    def test_json_customisations(self):
+        from pydantic.json import timedelta_isoformat
+
+        class WithCustomEncoders(BaseModel):
+            dt: datetime
+            diff: timedelta
+
+            class Config:
+                json_encoders = {
+                    datetime: lambda v: v.timestamp(),
+                    timedelta: timedelta_isoformat,
+                }
+
+        m = WithCustomEncoders(dt=datetime(2032, 6, 1), diff=timedelta(hours=100))
+        m_json = m.json()
+        assert m_json == '{"dt": 1969635600.0, "diff": "P4DT4H0M0.000000S"}'
+        # > {"dt": 1969635600.0, "diff": "P4DT4H0M0.000000S"}
+
+    def test_export_to_dict(self):
+        from pydantic import SecretStr
+
+        class User(BaseModel):
+            id: int
+            username: str
+            password: SecretStr = Field(exclude=True)
+
+        class Transaction(BaseModel):
+            id: str
+            user: User
+            value: int
+
+        t = Transaction(
+            id="1234567890",
+            user=User(id=42, username="JohnDoe", password="hashedpassword"),
+            value=9876543210,
+        )
+
+        # test exclude on field level
+        t_dict = t.dict()
+        assert "password" not in t_dict["user"]
+
+        # using a set:
+        t_dict = t.dict(exclude={"user", "value"})
+        assert "user" not in t_dict
+        # > {'id': '1234567890'}
+
+        # using a dict:
+        t_dict = t.dict(exclude={"user": {"username", "password"}, "value": True})
+        assert "password" not in t_dict["user"]
+        assert "id" in t_dict["user"]
+        # > {'id': '1234567890', 'user': {'id': 42}}
+
+        t_dict = t.dict(include={"id": True, "user": {"id"}})
+        assert "password" not in t_dict["user"]
+        assert "id" in t_dict["user"]
+        # > {'id': '1234567890', 'user': {'id': 42}}
+
+
+class TestDataClasses:
+    def test_data_class_model(self):
+        from pydantic.dataclasses import dataclass
+        import dataclasses
+
+        @dataclass
+        class User:
+            id: int
+            name: str = "John Doe"
+            friends: list[int] = dataclasses.field(default_factory=lambda: [0])
+            age: int | None = dataclasses.field(
+                default=None,
+                metadata=dict(title="The age of the user", description="do not lie!"),
+            )
+            height: int | None = Field(None, title="The height in cm", ge=50, le=300)
+
+        user = User(id="42")
+        assert user.name == "John Doe"
+        # user.__pydantic_model__.schema()
+        """
+        {
+            'title': 'User',
+            'type': 'object',
+            'properties': {
+                'id': {'title': 'Id', 'type': 'integer'},
+                'name': {
+                    'title': 'Name',
+                    'default': 'John Doe',
+                    'type': 'string',
+                },
+                'friends': {
+                    'title': 'Friends',
+                    'type': 'array',
+                    'items': {'type': 'integer'},
+                },
+                'age': {
+                    'title': 'The age of the user',
+                    'description': 'do not lie!',
+                    'type': 'integer',
+                },
+                'height': {
+                    'title': 'The height in cm',
+                    'minimum': 50,
+                    'maximum': 300,
+                    'type': 'integer',
+                },
+            },
+            'required': ['id'],
+        }
+        """
+
+    def test_dataclass_to_json(self):
+        import dataclasses
+        import json
+
+        from pydantic.dataclasses import dataclass
+        from pydantic.json import pydantic_encoder
+
+        @dataclass
+        class User:
+            id: int
+            name: str = "John Doe"
+            friends: list[int] = dataclasses.field(default_factory=lambda: [0])
+
+        user = User(id="42")
+        user_json = json.dumps(user, indent=4, default=pydantic_encoder)
+        assert isinstance(user_json, str)
+        """
+        {
+            "id": 42,
+            "name": "John Doe",
+            "friends": [
+                0
+            ]
+        }
+        """
+
+
+class TestBaseSettings:
+    def test_base_settings(self):
+        # https://pydantic-docs.helpmanual.io/usage/settings/
+        # read the data from env variable
+        from pydantic import (
+            BaseModel,
+            BaseSettings,
+            PyObject,
+            RedisDsn,
+            PostgresDsn,
+            AmqpDsn,
+            Field,
+        )
+
+        class SubModel(BaseModel):
+            foo = "bar"
+            apple = 1
+
+        class Settings(BaseSettings):
+            auth_key: str
+            api_key: str = Field(..., env="my_api_key")
+
+            redis_dsn: RedisDsn = "redis://user:pass@localhost:6379/1"
+            pg_dsn: PostgresDsn = "postgres://user:pass@localhost:5432/foobar"
+            amqp_dsn: AmqpDsn = "amqp://user:pass@localhost:5672/"
+
+            special_function: PyObject = "math.cos"
+
+            # to override domains:
+            # export my_prefix_domains='["foo.com", "bar.com"]'
+            domains: set[str] = set()
+
+            # to override more_settings:
+            # export my_prefix_more_settings='{"foo": "x", "apple": 1}'
+            more_settings: SubModel = SubModel()
+
+            class Config:
+                env_prefix = "my_prefix_"  # defaults to no prefix, i.e. ""
+                fields = {
+                    "auth_key": {
+                        "env": "my_auth_key",
+                    },
+                    "redis_dsn": {"env": ["service_redis_dsn", "redis_url"]},
+                }
+
+        assert Settings().redis_dsn == "redis://user:pass@localhost:6379/1"
+        """
+        {
+            'auth_key': 'xxx',
+            'api_key': 'xxx',
+            'redis_dsn': RedisDsn('redis://user:pass@localhost:6379/1', ),
+            'pg_dsn': PostgresDsn('postgres://user:pass@localhost:5432/foobar', ),
+            'amqp_dsn': AmqpDsn('amqp://user:pass@localhost:5672/', scheme='amqp',
+        user='user', password='pass', host='localhost', host_type='int_domain',
+        port='5672', path='/'),
+            'special_function': <built-in function cos>,
+            'domains': set(),
+            'more_settings': {'foo': 'bar', 'apple': 1},
+        }
+        """
